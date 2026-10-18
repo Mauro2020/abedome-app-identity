@@ -1,0 +1,36 @@
+name: Verify public ABEDOME routes
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check public TLS, metadata and protected API
+        shell: bash
+        run: |
+          python3 - <<'ABEDOME_CHECK'
+          import subprocess,tempfile,pathlib,json
+          checks=[
+           ('https://demo.abedome.com/',200,None,None),
+           ('https://demo.abedome.com/api/',401,None,None),
+           ('http://demo.abedome.com/abedome-demo/it',308,None,'https://demo.abedome.com/abedome-demo/it'),
+           ('https://auth.abedome.com/ios/',200,'273971a20ea16f78e89f75ee2a43649aa4251273fd9503dae034fb9e20a8ec3a',None),
+           ('https://auth.abedome.com/ios-dev/',200,'7ec15ffd116c31533f73980a662f750eb039eb10a7f60fae440ada5b38924e1f',None),
+           ('https://links.abedome.com/.well-known/apple-app-site-association',200,'771cf99e3985d0d6d0f5ed4719393688b029652ffddf02bde1e8e2b580b6ffe3',None),
+          ]
+          import hashlib
+          results=[]
+          with tempfile.TemporaryDirectory() as tmp:
+           for i,(url,status,sha,redirect) in enumerate(checks):
+            dest=pathlib.Path(tmp)/str(i)
+            q=subprocess.run(['curl','--silent','--show-error','--max-time','20','--output',str(dest),'--write-out','%{http_code} %{ssl_verify_result} %{redirect_url}',url],capture_output=True,text=True)
+            values=q.stdout.split(' ',2);actual=int(values[0]) if values and values[0].isdigit() else 0
+            passed=q.returncode==0 and actual==status and values[1]=='0'
+            if sha:passed=passed and dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest()==sha
+            if redirect:passed=passed and len(values)==3 and values[2]==redirect
+            results.append({'url':url,'expected':status,'actual':actual,'tlsVerify':values[1] if len(values)>1 else None,'passed':bool(passed)})
+          print(json.dumps({'environment':'GitHub-hosted ubuntu-latest runner; no credentials used','results':results,'passed':all(x['passed'] for x in results)},indent=2))
+          assert all(x['passed'] for x in results)
+          ABEDOME_CHECK
